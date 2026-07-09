@@ -1,24 +1,3 @@
-"""
-tests/test_correctness.py — correctness tests for the BM25 CPU baseline.
-
-Run with:
-    pytest tests/test_correctness.py -v
-
-All tests use small synthetic corpora so they run in < 5 s on any machine
-with no GPU and no internet access.
-
-Test coverage
--------------
-test_tokenize_*             : tokenisation edge cases
-test_idf_matches_reference  : IDF values match rank_bm25 exactly (ATIRE variant)
-test_scores_match_reference : per-document scores match within float tolerance
-test_top_k_*                : top-K selection correctness and stability
-test_top_k_matches_reference: top-10 document sets match rank_bm25 for all queries
-test_empty_query_*          : graceful handling of OOV / empty queries
-test_index_covers_all_docs  : every document appears in the inverted index
-test_batch_scoring          : score_batch shape and consistency with score()
-"""
-
 import os
 import sys
 
