@@ -97,7 +97,17 @@ def load_ms_marco_corpus(max_docs: Optional[int] = None) -> List[str]:
                 return corpus
     return corpus
 
+def top_k(scores: np.ndarray, k: int) -> np.ndarray:
+    """Return indices of the k highest scores (unordered within the k).
 
+    Uses argpartition — O(n) instead of O(n log n) full sort.
+    The GPU equivalent will use CUB DeviceRadixSort (V4) or a parallel
+    reduction top-K kernel.
+    """
+    if k >= len(scores):
+        return np.arange(len(scores))
+    part = np.argpartition(scores, -k)[-k:]
+    return part[np.argsort(-scores[part])]   # sort only the k winners
 
 @contextlib.contextmanager
 def timer(label: str = ""):
