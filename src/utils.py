@@ -2,7 +2,7 @@ import re
 import numpy as np
 import time
 import contextlib
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Dict
 from rank_bm25 import BM25Okapi
 from datasets import load_dataset
 
@@ -60,20 +60,34 @@ def load_ag_news_corpus(max_docs: int = None):
     return corpus
 
 
-def generate_queries_from_corpus(tokenized_corpus, num_queries: int,
-                                  terms_per_query=(2, 5), seed: int = 7):
+def generate_queries_from_corpus(
+    tokenized_corpus: List[List[str]],
+    num_queries: int,
+    terms_per_query: Tuple[int, int] = (2, 5),
+    seed: int = 42,
+) -> List[str]:
     """
-    Builds realistic queries by sampling terms straight out of the corpus vocabulary
+    Sample query terms from a real tokenised corpus, weighted by document frequency
     """
     rng = np.random.default_rng(seed)
-    all_terms = [tok for doc in tokenized_corpus for tok in doc]
-    vocab = list(set(all_terms))
-    queries = []
+ 
+    # Count document frequency per term
+    df: Dict[str, int] = {}
+    for doc in tokenized_corpus:
+        for tok in set(doc):          # set() → count each term once per doc
+            df[tok] = df.get(tok, 0) + 1
+ 
+    all_terms = list(df.keys())
+    # Weight by df so common terms are sampled more often (like real queries)
+    df_weights = np.array([df[t] for t in all_terms], dtype=np.float64)
+    df_weights /= df_weights.sum()
+ 
+    queries: List[str] = []
     for _ in range(num_queries):
-        n_terms = rng.integers(terms_per_query[0], terms_per_query[1] + 1)
-        idx = rng.choice(len(vocab), size=min(n_terms, len(vocab)), replace=False)
-        q_terms = [vocab[i] for i in idx]
-        queries.append(" ".join(q_terms))
+        n = int(rng.integers(terms_per_query[0], terms_per_query[1] + 1))
+        idx = rng.choice(len(all_terms), size=min(n, len(all_terms)),
+                         replace=False, p=df_weights)
+        queries.append(" ".join(all_terms[i] for i in idx))
     return queries
 
 def load_ms_marco_corpus(
