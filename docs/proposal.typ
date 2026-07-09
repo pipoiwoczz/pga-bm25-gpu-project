@@ -182,6 +182,27 @@ These three properties are what the V1 $arrow$ V2 $arrow$ V3 stages address in s
 
 What we hope to learn: how to design and tune GPU kernels for *irregular, data-dependent* workloads -- a very different discipline from the dense, uniform-stride kernels covered in the image-processing tracks, and directly transferable to how real search engines (and sparse ML workloads more broadly) are accelerated in production.
 
+== Risk Analysis
+
+#table(
+  columns: (auto, 1.3fr, 1.3fr),
+  stroke: 0.5pt + gray,
+  inset: 7pt,
+  [*Risk*], [*Description*], [*Mitigation*],
+
+  [Colab T4 resource limits],
+  [Free-tier Colab has limited RAM/GPU memory; earlier tests already hit OOM at 500K synthetic documents (~3.9 GB limit).],
+  [Validate kernels at reduced scale (100K--200K docs) first, use `int32` arrays, stream data in chunks, keep the synthetic corpus as fallback.],
+
+  [Single-member team],
+  [One-person team with no backup if a given week hits an unexpected blocker (e.g. a hard-to-debug CUDA bug).],
+  [Treat GPU V1--V3 as the committed 100% deliverable; GPU V4 is an optional stretch goal, dropped first if behind schedule.],
+
+  [Dataset access (MS MARCO)],
+  [The official MS MARCO corpus requires registration and a bulk download -- it cannot be fetched directly from a URL.],
+  [Load it via Hugging Face `datasets` (`irds/msmarco-passage`, `streaming=True`) instead of the official mirror; fall back to the synthetic Zipfian corpus if HF streaming is also unavailable.],
+)
+
 == Resources
 
 *Starting point:* I am starting from an *existing, already-working CPU baseline* (not from scratch for the CPU portion): `src/cpu_baseline.py` implements and profiles both the `rank_bm25` reference implementation and a hand-written NumPy inverted-index scorer, `tests/test_correctness.py` verifies exact top-10 agreement between the two, and `cProfile` output has already confirmed the posting-list scoring step as the bottleneck. The GPU kernels (V1--V4) will be written from scratch in Numba CUDA / CuPy on top of this baseline.
@@ -190,7 +211,7 @@ What we hope to learn: how to design and tune GPU kernels for *irregular, data-d
 
 *Reference material:* NVIDIA CUB library (for the optional V4 top-K step), the BM25 paper (Robertson & Zaragoza 2009) for the exact scoring formula and IDF conventions, and the `rank_bm25` source for correctness parity (already reverse-engineered and matched exactly in the CPU baseline, including its epsilon-floor handling of negative IDF values).
 
-*Still to figure out:* access to the full MS MARCO passage corpus for the largest-scale benchmark run is not yet confirmed (registration / download size); the synthetic Zipfian generator is the fallback if this does not materialize in time.
+*Datasets:* AG News (Hugging Face `fancyzhx/ag_news`) for correctness validation; MS MARCO Passage Ranking for the large-scale benchmark, loaded via Hugging Face `irds/msmarco-passage` with `streaming=True` since the official corpus requires registration and a bulk download.
 
 == Optimization Plan
 
