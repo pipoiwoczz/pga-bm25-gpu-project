@@ -13,6 +13,7 @@ from utils import (
     generate_queries_from_corpus,
     load_ag_news_corpus,
     load_ms_marco_corpus,
+    load_ms_marco_queries,
     timer,
 )
 from cpu_baseline import (
@@ -89,19 +90,30 @@ def load_data(args) -> tuple:
         )
         tokenized_queries = [tokenize(q) for q in queries]
         return tokenized_corpus, tokenized_queries, None
-
+ 
     if args.dataset == "ms_marco":
-        print(f"[1/4] Loading MS MARCO (max {args.num_docs:,} passages) ...")
-        with timer("MS MARCO load"):
-            corpus = load_ms_marco_corpus(max_docs=args.num_docs)
+        print(f"[1/4] Loading MS MARCO (source={args.ms_marco_source!r}, "
+              f"max {args.num_docs:,} passages) ...")
+        with timer("MS MARCO corpus load"):
+            corpus = load_ms_marco_corpus(
+                max_docs=args.num_docs, source=args.ms_marco_source
+            )
         print(f"      Loaded {len(corpus):,} passages.")
         tokenized_corpus = [tokenize(doc) for doc in corpus]
-        queries = generate_queries_from_corpus(
-            tokenized_corpus, args.num_queries, seed=args.seed + 1
-        )
-        tokenized_queries = [tokenize(q) for q in queries]
+        # Use real MS MARCO queries when available, fall back to corpus-sampled
+        if args.ms_marco_real_queries:
+            print(f"      Loading {args.num_queries} real MS MARCO queries ...")
+            raw_queries = load_ms_marco_queries(
+                max_queries=args.num_queries, split="validation"
+            )
+            tokenized_queries = [tokenize(q) for q in raw_queries]
+        else:
+            tokenized_queries = [tokenize(q) for q in
+                generate_queries_from_corpus(
+                    tokenized_corpus, args.num_queries, seed=args.seed + 1
+                )]
         return tokenized_corpus, tokenized_queries, None
-
+ 
     sys.exit(f"[ERROR] Unknown dataset '{args.dataset}'. "
              "Choose: synthetic | ag_news | ms_marco")
 
@@ -124,6 +136,11 @@ def parse_args():
                    help="Run cProfile on the scoring step (CPU only)")
     p.add_argument("--no-verify",   action="store_true",
                    help="Skip correctness check vs rank_bm25 (saves time at scale)")
+    p.add_argument("--ms-marco-source", default="irds",
+                   choices=["irds", "microsoft"],
+                   help="MS MARCO HuggingFace source (only with --dataset ms_marco)")
+    p.add_argument("--ms-marco-real-queries", action="store_true",
+                   help="Use real MS MARCO validation queries instead of corpus-sampled")
     return p.parse_args()
 
 

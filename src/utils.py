@@ -52,9 +52,11 @@ def load_ag_news_corpus(max_docs: int = None):
     """
 
     ds = load_dataset("fancyzhx/ag_news", split="train")
-    if max_docs is not None:
-        ds = ds.select(range(min(max_docs, len(ds))))
-    corpus = [f"{row['title']} {row['description']}" for row in ds]
+    corpus: List[str] = []
+    for row in ds:
+        corpus.append(row["text"])   # 'text' already contains title + body
+        if max_docs and len(corpus) >= max_docs:
+            break
     return corpus
 
 
@@ -74,28 +76,53 @@ def generate_queries_from_corpus(tokenized_corpus, num_queries: int,
         queries.append(" ".join(q_terms))
     return queries
 
-def load_ms_marco_corpus(max_docs: Optional[int] = None) -> List[str]:
-    """Load MS MARCO passage corpus via HuggingFace datasets.
-
-    Uses the 'ms_marco' dataset, 'v2.1' config.
-    Each passage is a plain text string.
-    Requires internet + `pip install datasets`.
+def load_ms_marco_corpus(
+    max_docs: Optional[int] = None,
+    source: str = "irds",
+) -> List[str]:
     """
-    try:
-        from datasets import load_dataset  # type: ignore
-    except ImportError as exc:
-        raise ImportError(
-            "pip install datasets   # then retry"
-        ) from exc
-
-    ds = load_dataset("ms_marco", "v2.1", split="train", trust_remote_code=True)
+    Load MS MARCO passage corpus via HuggingFace datasets
+    """
     corpus: List[str] = []
-    for row in ds:
-        for passage in row["passages"]["passage_text"]:
-            corpus.append(passage)
+ 
+    if source == "irds":
+        # Flat format: one passage per row — easiest to work with
+        ds = load_dataset("irds/msmarco-passage", "docs", split="train", streaming=True)
+        for row in ds:
+            corpus.append(row["text"])
             if max_docs and len(corpus) >= max_docs:
-                return corpus
+                break
+ 
+    elif source == "microsoft":
+        # Nested format: each QA row contains multiple passages
+        ds = load_dataset("microsoft/ms_marco", "v2.1", split="train", streaming=True)
+        for row in ds:
+            for passage in row["passages"]["passage_text"]:
+                corpus.append(passage)
+                if max_docs and len(corpus) >= max_docs:
+                    return corpus
+ 
+    else:
+        raise ValueError(f"Unknown source {source!r}. Choose 'irds' or 'microsoft'.")
+ 
     return corpus
+ 
+ 
+def load_ms_marco_queries(
+    max_queries: Optional[int] = None,
+    split: str = "validation",
+) -> List[str]:
+    """Load MS MARCO queries for benchmarking retrieval quality"""
+    ds = load_dataset("microsoft/ms_marco", "v2.1", split=split, streaming=True)
+    queries: List[str] = []
+    for row in ds:
+        q = row.get("query", "").strip()
+        if q:
+            queries.append(q)
+        if max_queries and len(queries) >= max_queries:
+            break
+    return queries
+ 
 
 def top_k(scores: np.ndarray, k: int) -> np.ndarray:
     """Return indices of the k highest scores (unordered within the k).
