@@ -1,98 +1,193 @@
 import argparse
+import sys
 import time
-import numpy as np
+import os
 from rank_bm25 import BM25Okapi
 
-from utils import (generate_synthetic_corpus, generate_synthetic_queries, generate_queries_from_corpus,
-                   load_ag_news_corpus, tokenize)
-from cpu_baseline import NumpyBM25
+import numpy as np
 
-def main():
-    parser = argparse.ArgumentParser(description="BM25 CPU baseline")
-    parser.add_argument("--num-docs", type=int, default=20000,
-                         help="Corpus size (synthetic). Use 100_000 / "
-                              "1_000_000 for the real benchmark runs.")
-    parser.add_argument("--vocab-size", type=int, default=5000)
-    parser.add_argument("--num-queries", type=int, default=32,
-                         help="Matches the proposal's batch-of-32 target.")
-    parser.add_argument("--top-k", type=int, default=10)
-    parser.add_argument("--profile", action="store_true",
-                         help="Print a cProfile breakdown of the custom scorer.")
-    parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--dataset", choices=["synthetic", "ag_news"],
-                         default="synthetic",
-                         help="synthetic: Zipf-generated corpus (no internet "
-                              "needed). ag_news: real ~120K-document news "
-                              "corpus from Hugging Face (requires `pip "
-                              "install datasets` and internet access).")
-    args = parser.parse_args()
+from utils import (
+    tokenize,
+    generate_synthetic_corpus,
+    generate_synthetic_queries,
+    generate_queries_from_corpus,
+    load_ag_news_corpus,
+    load_ms_marco_corpus,
+    timer,
+)
+from cpu_baseline import (
+    NumpyBM25,
+    verify_against_reference,
+    time_scoring,
+    profile_scoring,
+)
 
-    if args.dataset == "ag_news":
-        print(f"[1/5] Loading AG News corpus from Hugging Face "
-              f"(max {args.num_docs} docs) ...")
-        corpus = load_ag_news_corpus(max_docs=args.num_docs)
+
+def _load_scorer(version: str):
+    """Return the scorer class for the requested version.
+
+    CPU version returns NumpyBM25 (already imported).
+    GPU versions are imported lazily so CPU runs never need CUDA/Numba.
+    """
+    if version == "cpu":
+        return NumpyBM25
+
+    if version == "gpu_v1":
+        try:
+            from gpu_v1 import CudaBM25V1  # type: ignore
+            return CudaBM25V1
+        except ImportError:
+            sys.exit("[ERROR] gpu_v1 not implemented yet — run --version cpu")
+
+    if version == "gpu_v2":
+        try:
+            from gpu_v2 import CudaBM25V2  # type: ignore
+            return CudaBM25V2
+        except ImportError:
+            sys.exit("[ERROR] gpu_v2 not implemented yet — run --version cpu")
+
+    if version == "gpu_v3":
+        try:
+            from gpu_v3 import CudaBM25V3  # type: ignore
+            return CudaBM25V3
+        except ImportError:
+            sys.exit("[ERROR] gpu_v3 not implemented yet — run --version cpu")
+
+    if version == "gpu_v4":
+        try:
+            from gpu_v4 import CudaBM25V4  # type: ignore
+            return CudaBM25V4
+        except ImportError:
+            sys.exit("[ERROR] gpu_v4 not implemented yet — run --version cpu")
+
+    sys.exit(f"[ERROR] Unknown version '{version}'. "
+             "Choose: cpu | gpu_v1 | gpu_v2 | gpu_v3 | gpu_v4")
+
+def load_data(args) -> tuple:
+    """Return (tokenized_corpus, tokenized_queries, vocab_or_none)."""
+
+    if args.dataset == "synthetic":
+        print(f"[1/4] Generating synthetic corpus "
+              f"({args.num_docs:,} docs, vocab={args.vocab_size:,}) ...")
+        with timer("corpus generation"):
+            corpus, vocab = generate_synthetic_corpus(
+                args.num_docs, vocab_size=args.vocab_size, seed=args.seed
+            )
         tokenized_corpus = [tokenize(doc) for doc in corpus]
-        queries = generate_queries_from_corpus(
-            tokenized_corpus, args.num_queries, seed=args.seed + 1)
-        tokenized_queries = [tokenize(q) for q in queries]
-        print(f"      Loaded {len(corpus)} real documents.")
-    else:
-        print(f"[1/5] Generating synthetic corpus: {args.num_docs} docs, "
-              f"vocab={args.vocab_size} ...")
-        corpus, vocab = generate_synthetic_corpus(
-            args.num_docs, vocab_size=args.vocab_size, seed=args.seed)
-        tokenized_corpus = [tokenize(doc) for doc in corpus]
-
         queries = generate_synthetic_queries(vocab, args.num_queries, seed=args.seed + 1)
         tokenized_queries = [tokenize(q) for q in queries]
-    print(f"      {len(queries)} queries generated "
-          f"(avg {np.mean([len(q) for q in tokenized_queries]):.1f} terms/query)")
+        return tokenized_corpus, tokenized_queries, vocab
 
-    print("[2/5] Building rank_bm25 reference index ...")
+    if args.dataset == "ag_news":
+        print(f"[1/4] Loading AG News (max {args.num_docs:,} docs) ...")
+        with timer("AG News load"):
+            corpus = load_ag_news_corpus(max_docs=args.num_docs)
+        print(f"      Loaded {len(corpus):,} documents.")
+        tokenized_corpus = [tokenize(doc) for doc in corpus]
+        queries = generate_queries_from_corpus(
+            tokenized_corpus, args.num_queries, seed=args.seed + 1
+        )
+        tokenized_queries = [tokenize(q) for q in queries]
+        return tokenized_corpus, tokenized_queries, None
+
+    if args.dataset == "ms_marco":
+        print(f"[1/4] Loading MS MARCO (max {args.num_docs:,} passages) ...")
+        with timer("MS MARCO load"):
+            corpus = load_ms_marco_corpus(max_docs=args.num_docs)
+        print(f"      Loaded {len(corpus):,} passages.")
+        tokenized_corpus = [tokenize(doc) for doc in corpus]
+        queries = generate_queries_from_corpus(
+            tokenized_corpus, args.num_queries, seed=args.seed + 1
+        )
+        tokenized_queries = [tokenize(q) for q in queries]
+        return tokenized_corpus, tokenized_queries, None
+
+    sys.exit(f"[ERROR] Unknown dataset '{args.dataset}'. "
+             "Choose: synthetic | ag_news | ms_marco")
+
+def parse_args():
+    p = argparse.ArgumentParser(
+        description="BM25 Document Retrieval Benchmark (CSC14116 B4)",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    p.add_argument("--version",     default="cpu",
+                   choices=["cpu", "gpu_v1", "gpu_v2", "gpu_v3", "gpu_v4"])
+    p.add_argument("--dataset",     default="synthetic",
+                   choices=["synthetic", "ag_news", "ms_marco"])
+    p.add_argument("--num-docs",    type=int, default=10_000)
+    p.add_argument("--num-queries", type=int, default=32)
+    p.add_argument("--vocab-size",  type=int, default=5_000,
+                   help="Only used with --dataset synthetic")
+    p.add_argument("--top-k",       type=int, default=10)
+    p.add_argument("--seed",        type=int, default=42)
+    p.add_argument("--profile",     action="store_true",
+                   help="Run cProfile on the scoring step (CPU only)")
+    p.add_argument("--no-verify",   action="store_true",
+                   help="Skip correctness check vs rank_bm25 (saves time at scale)")
+    return p.parse_args()
+
+
+def main():
+    args = parse_args()
+
+    # --- 1. Load data -------------------------------------------------------
+    tokenized_corpus, tokenized_queries, _ = load_data(args)
+
+    # --- 2. Build index (target scorer) ------------------------------------
+    ScorerClass = _load_scorer(args.version)
+    print(f"[2/4] Building index ({args.version}) ...")
     t0 = time.perf_counter()
-    reference = BM25Okapi(tokenized_corpus)
-    ref_build_time = time.perf_counter() - t0
+    scorer = ScorerClass(tokenized_corpus)
+    build_time = time.perf_counter() - t0
+    print(f"      Done in {build_time:.3f} s")
 
-    print("[3/5] Building custom NumPy inverted index ...")
-    t0 = time.perf_counter()
-    custom = NumpyBM25(tokenized_corpus)
-    custom_build_time = time.perf_counter() - t0
-
-    print("[4/5] Verifying correctness (top-{} match vs rank_bm25) ...".format(args.top_k))
+    # --- 3. Correctness verification (CPU reference) -----------------------
     mismatches = 0
-    for q in tokenized_queries:
-        ref_scores = np.array(reference.get_scores(q))
-        ref_top = set(np.argsort(-ref_scores)[:args.top_k].tolist())
-        cus_scores = custom.score(q)
-        cus_top = set(custom.top_k(cus_scores, k=args.top_k).tolist())
-        if ref_top != cus_top:
-            mismatches += 1
-    print(f"      {len(tokenized_queries) - mismatches}/{len(tokenized_queries)} "
-          f"queries had an exact top-{args.top_k} match.")
-    if mismatches:
-        print("      NOTE: mismatches are expected only from tie-breaking on "
-              "equal scores; investigate if this number is large.")
+    if not args.no_verify:
+        print("[3/4] Verifying correctness vs rank_bm25 ...")
+        ref_scorer = BM25Okapi(tokenized_corpus)
+        # For GPU scorers, delegate to an internal CPU scorer for verification
+        cpu_scorer = scorer if args.version == "cpu" else NumpyBM25(tokenized_corpus)
+        mismatches = verify_against_reference(
+            cpu_scorer, ref_scorer, tokenized_queries, k=args.top_k
+        )
+        status = "✓ PASS" if mismatches == 0 else f"✗ {mismatches} mismatches"
+        print(f"      {status} ({args.num_queries - mismatches}/{args.num_queries} "
+              f"queries matched top-{args.top_k})")
+    else:
+        print("[3/4] Correctness check skipped (--no-verify).")
 
-    print("[5/5] Timing scoring step (this is the GPU target) ...")
-    ref_time = time_reference_scoring(reference, tokenized_queries)
-    custom_time = time_custom_scoring(custom, tokenized_queries)
+    # --- 4. Timing ----------------------------------------------------------
+    print("[4/4] Timing scoring step ...")
+    score_time = time_scoring(scorer, tokenized_queries)
+    qps = args.num_queries / score_time
 
-    print("\n===== CPU BASELINE RESULTS =====")
-    print(f"Corpus size:                 {args.num_docs:,} documents")
-    print(f"Vocabulary size:              {args.vocab_size:,} terms")
-    print(f"Batch size (queries):         {args.num_queries}")
-    print(f"Index build time (rank_bm25): {ref_build_time:.4f} s")
-    print(f"Index build time (custom):    {custom_build_time:.4f} s")
-    print(f"Scoring time (rank_bm25):     {ref_time*1000:.2f} ms  "
-          f"({ref_time/args.num_queries*1000:.3f} ms/query)")
-    print(f"Scoring time (custom NumPy):  {custom_time*1000:.2f} ms  "
-          f"({custom_time/args.num_queries*1000:.3f} ms/query)")
-    print(f"Performance target (V3 GPU):  < 100 ms for 500K docs, 32 queries")
-    print("=================================\n")
+    # --- Results summary ----------------------------------------------------
+    print()
+    print("=" * 52)
+    print("  BM25 BENCHMARK RESULTS")
+    print("=" * 52)
+    print(f"  Version:          {args.version}")
+    print(f"  Dataset:          {args.dataset}")
+    print(f"  Corpus size:      {len(tokenized_corpus):>12,} documents")
+    print(f"  Batch size:       {args.num_queries:>12,} queries")
+    print(f"  Index build time: {build_time * 1000:>12.2f} ms")
+    print(f"  Scoring time:     {score_time * 1000:>12.2f} ms total")
+    print(f"  Per-query:        {score_time / args.num_queries * 1000:>12.3f} ms/query")
+    print(f"  Throughput:       {qps:>12.1f} queries/sec")
+    if not args.no_verify:
+        print(f"  Correctness:      {args.num_queries - mismatches}/{args.num_queries} "
+              f"top-{args.top_k} matched")
+    print(f"  Target (V3 GPU):  500K docs, 32 queries < 100 ms")
+    print("=" * 52)
 
+    # --- Optional cProfile --------------------------------------------------
     if args.profile:
-        print("Profiling custom scorer (top cumulative-time functions):\n")
-        print(profile_custom_scoring(custom, tokenized_queries))
+        if args.version != "cpu":
+            print("\n[INFO] --profile only supported for --version cpu, skipping.")
+        else:
+            print("\nProfiling (cProfile, custom scorer):\n")
+            print(profile_scoring(scorer, tokenized_queries))
 
 
 if __name__ == "__main__":

@@ -1,4 +1,5 @@
-cProfile
+line_profiler
+memory_profiler
 rank-bm25
 datasets
 pytest

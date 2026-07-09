@@ -1,5 +1,9 @@
 import re
 import numpy as np
+import time
+import contextlib
+from typing import List, Tuple, Optional
+from rank_bm25 import BM25Okapi
 from datasets import load_dataset
 
 TOKEN_RE = re.compile(r"[a-z0-9]+")
@@ -53,6 +57,7 @@ def load_ag_news_corpus(max_docs: int = None):
     corpus = [f"{row['title']} {row['description']}" for row in ds]
     return corpus
 
+
 def generate_queries_from_corpus(tokenized_corpus, num_queries: int,
                                   terms_per_query=(2, 5), seed: int = 7):
     """
@@ -68,3 +73,43 @@ def generate_queries_from_corpus(tokenized_corpus, num_queries: int,
         q_terms = [vocab[i] for i in idx]
         queries.append(" ".join(q_terms))
     return queries
+
+def load_ms_marco_corpus(max_docs: Optional[int] = None) -> List[str]:
+    """Load MS MARCO passage corpus via HuggingFace datasets.
+
+    Uses the 'ms_marco' dataset, 'v2.1' config.
+    Each passage is a plain text string.
+    Requires internet + `pip install datasets`.
+    """
+    try:
+        from datasets import load_dataset  # type: ignore
+    except ImportError as exc:
+        raise ImportError(
+            "pip install datasets   # then retry"
+        ) from exc
+
+    ds = load_dataset("ms_marco", "v2.1", split="train", trust_remote_code=True)
+    corpus: List[str] = []
+    for row in ds:
+        for passage in row["passages"]["passage_text"]:
+            corpus.append(passage)
+            if max_docs and len(corpus) >= max_docs:
+                return corpus
+    return corpus
+
+
+
+@contextlib.contextmanager
+def timer(label: str = ""):
+    """Context manager that prints elapsed wall-clock time.
+
+    Usage::
+
+        with timer("index build"):
+            idx = NumpyBM25(corpus)
+    """
+    t0 = time.perf_counter()
+    yield
+    elapsed = time.perf_counter() - t0
+    if label:
+        print(f"  [{label}] {elapsed * 1000:.2f} ms")

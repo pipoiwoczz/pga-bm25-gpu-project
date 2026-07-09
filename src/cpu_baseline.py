@@ -1,4 +1,5 @@
 import numpy as np
+from typing import List, Tuple
 from collections import defaultdict
 
 class NumpyBM25:
@@ -96,3 +97,68 @@ class NumpyBM25:
             return np.argsort(-scores)
         idx = np.argpartition(-scores, k)[:k]
         return idx[np.argsort(-scores[idx])]
+    
+
+# ------------------------------------------------------------------
+# Verification helpers (used by main.py and tests)
+# ------------------------------------------------------------------
+
+def verify_against_reference(
+    custom: NumpyBM25,
+    reference,          # rank_bm25.BM25Okapi
+    tokenized_queries: List[List[str]],
+    k: int = 10,
+) -> int:
+    """Return the number of queries whose top-k sets differ.
+
+    A mismatch of 0 means both scorers agree on the top-k document set
+    for every query (set equality — order within the top-k is ignored).
+    """
+    mismatches = 0
+    for q in tokenized_queries:
+        ref_scores = np.array(reference.get_scores(q))
+        ref_top = set(np.argsort(-ref_scores)[:k].tolist())
+        cus_scores = custom.score(q)
+        cus_top = set(custom.top_k(cus_scores, k=k).tolist())
+        if ref_top != cus_top:
+            mismatches += 1
+    return mismatches
+
+
+def time_scoring(
+    scorer,
+    tokenized_queries: List[List[str]],
+    use_get_scores: bool = False,
+) -> float:
+    """Return wall-clock seconds for scoring all queries (one pass)."""
+    import time
+    t0 = time.perf_counter()
+    if use_get_scores:
+        for q in tokenized_queries:
+            scorer.get_scores(q)
+    else:
+        for q in tokenized_queries:
+            scorer.score(q)
+    return time.perf_counter() - t0
+
+
+def profile_scoring(
+    custom: NumpyBM25,
+    tokenized_queries: List[List[str]],
+    top_n: int = 10,
+) -> str:
+    """Run cProfile over the scoring loop and return a formatted string."""
+    import cProfile
+    import io
+    import pstats
+
+    pr = cProfile.Profile()
+    pr.enable()
+    for q in tokenized_queries:
+        custom.score(q)
+    pr.disable()
+
+    buf = io.StringIO()
+    ps = pstats.Stats(pr, stream=buf).sort_stats("cumulative")
+    ps.print_stats(top_n)
+    return buf.getvalue()
