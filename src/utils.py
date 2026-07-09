@@ -36,7 +36,7 @@ def generate_synthetic_corpus(num_docs, vocab_size=1000, seed=0):
     ]
     return corpus, vocab
 
-def generate_synthetic_queries(vocab, num_queries: int, terms_per_query=(2, 5),
+def generate_synthetic_queries(vocab, num_queries: int, terms_per_query=(8, 8),
                                 seed: int = 7):
     rng = np.random.default_rng(seed)
     queries = []
@@ -63,7 +63,7 @@ def load_ag_news_corpus(max_docs: int = None):
 def generate_queries_from_corpus(
     tokenized_corpus: List[List[str]],
     num_queries: int,
-    terms_per_query: Tuple[int, int] = (2, 5),
+    terms_per_query: Tuple[int, int] = (8, 8),
     seed: int = 42,
 ) -> List[str]:
     """
