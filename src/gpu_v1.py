@@ -53,7 +53,7 @@ class CudaBM25V1:
 
 
         inverted_index = defaultdict(lambda: ([], []))  # term -> (doc_ids, tfs)
-
+        df = defaultdict(int)          
         for doc_id, doc in enumerate(tokenized_corpus):
             counts = defaultdict(int)
             for tok in doc:
