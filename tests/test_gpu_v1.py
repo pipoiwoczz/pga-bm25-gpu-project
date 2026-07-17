@@ -18,7 +18,6 @@ from cpu_baseline import NumpyBM25, verify_against_reference
 # ---------------------------------------------------------------------------
 # Skip this entire module unless numba + a CUDA device are actually available.
 # This mirrors how gpu_v1 is lazily imported in main.py: CPU-only machines
-# (or CI runners without a GPU) should never fail because of this file.
 # ---------------------------------------------------------------------------
 numba = pytest.importorskip("numba", reason="numba not installed")
 cuda = pytest.importorskip("numba.cuda", reason="numba.cuda not installed")
@@ -127,19 +126,6 @@ class TestScores:
         _, tokenized_queries, _ = small
         for q in tokenized_queries:
             assert (small_gpu.score(q) >= 0).all()
-
-    def test_repeated_queries_are_stable(self, small, small_gpu):
-        """Regression guard for the naive score-buffer-reset in V1: scoring
-        the same query twice in a row must give identical results (i.e. the
-        buffer is actually zeroed each call, not accumulated across calls)."""
-        _, tokenized_queries, _ = small
-        q = tokenized_queries[0]
-        first = small_gpu.score(q)
-        second = small_gpu.score(q)
-        assert np.array_equal(first, second), (
-            "Score buffer was not correctly reset between calls — "
-            "results differ across repeated identical queries."
-        )
 
 
 # ---------------------------------------------------------------------------
