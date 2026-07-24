@@ -75,7 +75,7 @@ def load_data(args) -> tuple:
                 args.num_docs, vocab_size=args.vocab_size, seed=args.seed
             )
         tokenized_corpus = [tokenize(doc) for doc in corpus]
-        queries = generate_queries_from_corpus(vocab, args.num_queries, seed=args.seed + 1)
+        queries = generate_queries_from_corpus(tokenized_corpus, args.num_queries, seed=args.seed + 1)
         tokenized_queries = [tokenize(q) for q in queries]
         return tokenized_corpus, tokenized_queries, vocab
 
