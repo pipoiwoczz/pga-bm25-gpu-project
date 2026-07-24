@@ -129,16 +129,24 @@ def time_scoring(
     scorer,
     tokenized_queries: List[List[str]],
     use_get_scores: bool = False,
+    warmup: int = 0,
 ) -> float:
-    """Return wall-clock seconds for scoring all queries (one pass)."""
+    """Return wall-clock seconds for scoring all queries (one pass).
+
+    warmup > 0 runs that many queries before timing starts — required for
+    GPU scorers, where Numba JIT-compiles kernels on first call and would
+    otherwise charge the entire compile time to the first query.
+    """
     import time
+
+    call = (lambda q: scorer.get_scores(q)) if use_get_scores else (lambda q: scorer.score(q))
+
+    for q in tokenized_queries[:warmup]:
+        call(q)
+
     t0 = time.perf_counter()
-    if use_get_scores:
-        for q in tokenized_queries:
-            scorer.get_scores(q)
-    else:
-        for q in tokenized_queries:
-            scorer.score(q)
+    for q in tokenized_queries:
+        call(q)
     return time.perf_counter() - t0
 
 

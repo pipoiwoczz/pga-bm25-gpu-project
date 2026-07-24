@@ -176,7 +176,14 @@ def main():
 
     # --- 4. Timing ----------------------------------------------------------
     print("[4/4] Timing scoring step ...")
-    score_time = time_scoring(scorer, tokenized_queries)
+    is_gpu = args.version.startswith("gpu")
+    if is_gpu:
+        from numba import cuda
+        cuda.synchronize()
+    score_time = time_scoring(scorer, tokenized_queries,
+                              warmup=2 if is_gpu else 0)
+    if is_gpu:
+        cuda.synchronize()
     qps = args.num_queries / score_time
 
     # --- Results summary ----------------------------------------------------
