@@ -2,6 +2,9 @@ import subprocess
 import sys
 import os
 
+import warnings
+from numba.core.errors import NumbaPerformanceWarning
+warnings.filterwarnings("ignore", category=NumbaPerformanceWarning)
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 BENCHES = [
